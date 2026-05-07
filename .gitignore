@@ -1,0 +1,42 @@
+# Environment
+.env
+*.env.local
+*.env.production
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+backend/.venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+*.egg
+
+# Node
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+
+# Generated seed data (large, regenerate with seed_data_generator.py)
+fabric/seed_data/*.csv
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+!.vscode/settings.json
+.idea/
+
+# Azure
+.azure/
+.copilot-tracking/
+backend/uv.lock
+frontend/package-lock.json
