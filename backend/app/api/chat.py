@@ -18,7 +18,7 @@ async def chat_stream(
     current_user: CurrentUser,
     settings: AppSettings,
 ):
-    orchestrator = OrchestratorService(settings, current_user["token"])
+    orchestrator = OrchestratorService(settings, user_token=current_user["token"])
 
     async def event_generator():
         try:

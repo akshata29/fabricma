@@ -15,6 +15,9 @@ dependencies = [
     "opentelemetry-sdk>=1.25",
     "opentelemetry-instrumentation-fastapi>=0.46b0",
     "sse-starlette>=1.6",
+    # Teams / Bot Framework channel integration
+    "botbuilder-core>=4.16",
+    "botbuilder-schema>=4.16",
 ]
 
 [tool.uv]

@@ -6,6 +6,7 @@ import time
 from collections.abc import AsyncGenerator
 
 from agent_framework_foundry import FoundryAgent
+from azure.identity import AzureCliCredential, ClientSecretCredential
 
 from app.config import Settings
 from app.services.auth_service import get_obo_credential
@@ -16,11 +17,28 @@ _AGENT_TIMEOUT_SEC = 120
 
 
 class OrchestratorService:
-    def __init__(self, settings: Settings, user_token: str) -> None:
+    def __init__(self, settings: Settings, user_token: str | None = None) -> None:
         self._settings = settings
-        # Create credential once per request; OnBehalfOfCredential caches the
-        # exchanged token internally so subsequent agent calls reuse it.
-        self._credential = get_obo_credential(user_token, settings)
+        # When a user token is supplied, delegate calls on behalf of that user (OBO).
+        # When absent (e.g. the Teams bot calling without SSO), fall back to the
+        # application's own client-secret credential so the bot can still reach Foundry.
+        if user_token:
+            self._credential = get_obo_credential(user_token, settings)
+        elif not settings.teams_app_id:
+            # Dev / emulator mode: no bot app ID means we're running locally
+            # without a registered Azure Bot.  Use the developer's Azure CLI
+            # identity (`az login`) which already has delegated Fabric access,
+            # matching what OBO provides in production.
+            self._credential = AzureCliCredential()
+        else:
+            # Production bot identity: service principal with client secret.
+            # In real Teams deployments OBO is always present, so this path
+            # only runs for background/proactive scenarios.
+            self._credential = ClientSecretCredential(
+                tenant_id=settings.azure_tenant_id,
+                client_id=settings.azure_client_id,
+                client_secret=settings.azure_client_secret,
+            )
         self._session_service = SessionService()
         # Cache FoundryAgent instances by (name, version) to avoid repeated construction.
         self._agent_cache: dict[str, FoundryAgent] = {}
@@ -168,6 +186,59 @@ class OrchestratorService:
             )
             yield {"type": "hitl", "data": {"session_id": session_id, "plan": plan}}
             return
+
+        if pattern == "concurrent" and resolved_agents:
+            agent_queries = self._agent_queries_from_steps(
+                plan.get("steps", []), agents, query
+            )
+            resolved_queries = [
+                agent_queries[i] for i, a in enumerate(agents) if a in agent_name_map
+            ]
+            yield {"type": "status", "data": {"message": f"Running {', '.join(agents)} agents in parallel..."}}
+            results = await self.run_concurrent(resolved_agents, resolved_queries)
+            yield {"type": "status", "data": {"message": "Synthesizing results..."}}
+            synthesized = await self.synthesize(query, results)
+            yield {"type": "token", "data": {"text": synthesized}}
+        elif pattern == "sequential" and resolved_agents:
+            agent_queries = self._agent_queries_from_steps(
+                plan.get("steps", []), agents, query
+            )
+            resolved_queries = [
+                agent_queries[i] for i, a in enumerate(agents) if a in agent_name_map
+            ]
+            yield {"type": "status", "data": {"message": f"Running {', '.join(agents)} agents in sequence..."}}
+            result = await self.run_sequential(resolved_agents, resolved_queries)
+            yield {"type": "token", "data": {"text": result}}
+        elif resolved_agents:
+            yield {"type": "status", "data": {"message": f"Calling {agents[0]} agent..."}}
+            result = await self.run_single(resolved_agents[0], query)
+            yield {"type": "token", "data": {"text": result}}
+        else:
+            yield {"type": "token", "data": {"text": "No domain agents selected."}}
+
+        yield {"type": "done", "data": {"session_id": session_id}}
+
+    async def dispatch_with_plan(
+        self, query: str, session_id: str, plan: dict
+    ) -> AsyncGenerator[dict, None]:
+        """Execute a pre-approved routing plan without re-routing through the orchestrator.
+
+        Used after HITL approval so the previously-chosen plan runs directly,
+        avoiding a second orchestrator call that might re-trigger the hitl pattern.
+        """
+        yield {"type": "plan", "data": plan}
+
+        pattern = plan.get("pattern", "single")
+        agents = plan.get("agents", [])
+
+        agent_name_map = {
+            "invoice": self._settings.azure_ai_agent_invoice_name,
+            "inventory": self._settings.azure_ai_agent_inventory_name,
+            "sales": self._settings.azure_ai_agent_sales_name,
+        }
+        resolved_agents = [
+            agent_name_map.get(a, a) for a in agents if a in agent_name_map
+        ]
 
         if pattern == "concurrent" and resolved_agents:
             agent_queries = self._agent_queries_from_steps(

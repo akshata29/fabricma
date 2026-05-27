@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     azure_ai_agent_orchestrator_version: str = "2"
     backend_cors_origins: str = ""
     log_level: str = "INFO"
+    # Teams / Bot Framework channel (optional — leave blank to disable the channel)
+    teams_app_id: str = ""
+    teams_app_password: str = ""
 
     model_config = SettingsConfigDict(
         env_file="../.env",
